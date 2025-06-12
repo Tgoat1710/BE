@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
+using SchoolHealth.Models;
 
 namespace SchoolHeath.Models;
 
@@ -14,6 +15,8 @@ public partial class ApplicationDbContext : DbContext
         : base(options)
     {
     }
+
+    public virtual DbSet<OtpCode> OtpCodes { get; set; }
 
     public virtual DbSet<Account> Accounts { get; set; }
 

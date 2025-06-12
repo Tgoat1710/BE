@@ -1,6 +1,4 @@
-﻿// ... các using phía trên giữ nguyên
-
-using Microsoft.AspNetCore.Authentication.Cookies;
+﻿using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.Google;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -28,45 +26,47 @@ namespace SchoolHeath
             var jwtKey = builder.Configuration["Jwt:Key"];
             var jwtIssuer = builder.Configuration["Jwt:Issuer"];
 
-            // Đăng ký EmailService nếu dùng xác thực qua Gmail
+            // Đăng ký EmailService
             builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("EmailSettings"));
             builder.Services.AddTransient<IEmailService, EmailService>();
 
-            // Bước 3: Đăng ký CORS cho phép React truy cập API
+            // Đăng ký CORS cho React
             builder.Services.AddCors(options =>
             {
                 options.AddDefaultPolicy(policy =>
                 {
-                    policy.WithOrigins("http://localhost:3001") // Port của React dev server
+                    policy.WithOrigins("http://localhost:3000", "http://localhost:3001") // React dev server                                          // React dev server
                           .AllowAnyHeader()
                           .AllowAnyMethod()
                           .AllowCredentials();
                 });
             });
 
+            // Đăng ký Authentication (Google + JWT)
             builder.Services.AddAuthentication(options =>
             {
-                options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                options.DefaultChallengeScheme = GoogleDefaults.AuthenticationScheme;
+                // Thiết lập JWT làm scheme mặc định
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
             })
-            .AddCookie()
-            .AddGoogle(GoogleDefaults.AuthenticationScheme, options =>
-            {
-                options.ClientId = builder.Configuration["Authentication:Google:ClientId"];
-                options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
-                options.CallbackPath = "/signin-google";
-            })
-            .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+            .AddJwtBearer(options =>
             {
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidateAudience = false,
+                    ValidateAudience = true,
+                    ValidIssuer = jwtIssuer,
+                    ValidAudience = jwtIssuer,
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
-                    ValidIssuer = jwtIssuer,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
                 };
+            })
+            .AddGoogle(GoogleDefaults.AuthenticationScheme, options =>
+            {
+                options.ClientId = builder.Configuration["Authentication:Google:ClientId"];
+                options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
+                options.CallbackPath = "/signin-google"; // Mặc định path
             });
 
             // Swagger
@@ -84,10 +84,11 @@ namespace SchoolHeath
 
             app.UseHttpsRedirection();
 
-            // Bước 3: Thêm middleware UseCors (nên đặt trước Authentication/Authorization)
+            // CORS
             app.UseCors();
 
-            app.UseAuthentication(); // Phải nằm trước UseAuthorization
+            // Auth & Route
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.MapControllers();
@@ -95,4 +96,4 @@ namespace SchoolHeath
             app.Run();
         }
     }
-}   
+}

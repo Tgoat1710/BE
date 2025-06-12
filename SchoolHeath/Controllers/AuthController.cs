@@ -1,15 +1,10 @@
-﻿using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Authentication.Google;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using SchoolHeath.Models;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using System.Security.Claims;
 using System.Text;
-using System.Threading.Tasks;
-using System;
 
 namespace SchoolHeath.Controllers
 {
@@ -17,53 +12,64 @@ namespace SchoolHeath.Controllers
     [ApiController]
     public class AuthController : ControllerBase
     {
+        private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
 
-        public AuthController(IConfiguration configuration)
+        public AuthController(ApplicationDbContext context, IConfiguration configuration)
         {
+            _context = context;
             _configuration = configuration;
         }
 
-        [HttpGet("login-google")]
-        public IActionResult LoginGoogle()
+        [HttpPost("register")]
+        public async Task<IActionResult> Register(RegisterDTO dto)
         {
-            var redirectUrl = Url.Action("GoogleResponse", "Auth");
-            var properties = new AuthenticationProperties { RedirectUri = redirectUrl };
-            return Challenge(properties, GoogleDefaults.AuthenticationScheme);
-        }
+            if (await _context.Accounts.AnyAsync(a => a.Username == dto.Username))
+                return BadRequest("Tên đăng nhập đã tồn tại");
 
-        [HttpGet("GoogleResponse")]
-        public async Task<IActionResult> GoogleResponse()
-        {
-            var result = await HttpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-            if (!result.Succeeded)
-                return Unauthorized();
-
-            var claims = result.Principal.Identities.FirstOrDefault()?.Claims;
-            var email = claims?.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value;
-            var name = claims?.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value;
-
-            // Tạo JWT token
-            var token = GenerateJwtToken(email, name);
-
-            return Ok(new
+            var account = new Account
             {
-                Email = email,
-                Name = name,
-                Token = token
-            });
+                Username = dto.Username,
+                Password = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                Role = "Parent",
+                CreatedAt = DateTime.Now
+            };
+
+            _context.Accounts.Add(account);
+            await _context.SaveChangesAsync();
+
+            return Ok("Đăng ký thành công");
         }
 
-        private string GenerateJwtToken(string email, string name)
+        [HttpPost("login")]
+        public async Task<IActionResult> Login(LoginDTO dto)
+        {
+            // Kiểm tra username, password và role
+            var account = await _context.Accounts
+                .FirstOrDefaultAsync(a => a.Username == dto.Username && a.Role == dto.Role);
+
+            if (account == null || !BCrypt.Net.BCrypt.Verify(dto.Password, account.Password))
+                return Unauthorized("Tên đăng nhập, mật khẩu hoặc vai trò không đúng");
+
+            account.LastLogin = DateTime.Now;
+            await _context.SaveChangesAsync();
+
+            var token = GenerateJwtToken(account);
+
+            return Ok(new { Token = token });
+        }
+
+
+        private string GenerateJwtToken(Account account)
         {
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new[]
             {
-                new Claim(ClaimTypes.Email, email),
-                new Claim(ClaimTypes.Name, name),
-                new Claim(ClaimTypes.Role, "Parent") // có thể thay bằng logic phân quyền
+                new Claim(ClaimTypes.NameIdentifier, account.AccountId.ToString()),
+                new Claim(ClaimTypes.Name, account.Username),
+                new Claim(ClaimTypes.Role, account.Role)
             };
 
             var token = new JwtSecurityToken(
@@ -71,8 +77,7 @@ namespace SchoolHeath.Controllers
                 audience: _configuration["Jwt:Issuer"],
                 claims: claims,
                 expires: DateTime.Now.AddHours(3),
-                signingCredentials: creds
-            );
+                signingCredentials: creds);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
